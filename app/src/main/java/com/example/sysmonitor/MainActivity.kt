@@ -11,6 +11,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
@@ -46,19 +47,15 @@ fun MonitorScreen() {
     
     LaunchedEffect(Unit) {
         while(true) {
-            // Get CPU usage
             cpu = getCpuUsage()
             
-            // Get Memory using ActivityManager (works without root)
             val am = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
             val memInfo = ActivityManager.MemoryInfo()
             am.getMemoryInfo(memInfo)
-            ramTotal = memInfo.totalMem / (1024 * 1024) // MB
+            ramTotal = memInfo.totalMem / (1024 * 1024)
             ramUsed = ramTotal - (memInfo.availMem / (1024 * 1024))
             
-            // Get CPU temperature
             cpuTemp = getCpuTemp()
-            
             delay(1000)
         }
     }
@@ -67,7 +64,6 @@ fun MonitorScreen() {
         Text("System Monitor", fontSize = 32.sp, color = Color.White)
         Spacer(modifier = Modifier.height(30.dp))
         
-        // CPU Card
         Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF1A1D24))) {
             Column(modifier = Modifier.padding(20.dp)) {
                 Text("CPU Usage", color = Color.Gray, fontSize = 16.sp)
@@ -82,7 +78,6 @@ fun MonitorScreen() {
         
         Spacer(modifier = Modifier.height(16.dp))
         
-        // Memory Card
         Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF1A1D24))) {
             Column(modifier = Modifier.padding(20.dp)) {
                 Text("Memory", color = Color.Gray, fontSize = 16.sp)
@@ -104,7 +99,6 @@ fun MonitorScreen() {
         
         Spacer(modifier = Modifier.height(16.dp))
         
-        // Temperature Card
         Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF1A1D24))) {
             Column(modifier = Modifier.padding(20.dp)) {
                 Text("CPU Temperature", color = Color.Gray, fontSize = 16.sp)
@@ -121,11 +115,10 @@ fun MonitorScreen() {
 }
 
 private var lastCpuTime: Long = 0
-private var lastAppCpuTime: Long = 0
+private var lastIdleTime: Long = 0
 
 fun getCpuUsage(): Float {
     return try {
-        // Method 1: Try reading /proc/stat (may fail on some devices)
         val reader = BufferedReader(FileReader("/proc/stat"))
         val line = reader.readLine()
         reader.close()
@@ -155,44 +148,14 @@ fun getCpuUsage(): Float {
         }
         0f
     } catch(e: Exception) {
-        // Fallback: Use app-specific CPU usage if system-wide is restricted
-        getAppCpuUsage()
+        0f
     }
-}
-
-private var lastIdleTime: Long = 0
-
-fun getAppCpuUsage(): Float {
-    // Calculate CPU usage for this app only as fallback
-    val pid = Process.myPid()
-    try {
-        val reader = BufferedReader(FileReader("/proc/$pid/stat"))
-        val line = reader.readLine()
-        reader.close()
-        val parts = line.split(" ")
-        if(parts.size > 13) {
-            val utime = parts[13].toLong()
-            val stime = parts[14].toLong()
-            val current = utime + stime
-            
-            if(lastAppCpuTime > 0) {
-                val diff = current - lastAppCpuTime
-                // Rough estimate: assume 100 ticks per second per core
-                val usage = (diff / 100f).coerceIn(0f, 100f)
-                lastAppCpuTime = current
-                return usage
-            }
-            lastAppCpuTime = current
-        }
-    } catch(e: Exception) {}
-    return 0f
 }
 
 fun getCpuTemp(): Float {
     val paths = arrayOf(
         "/sys/class/thermal/thermal_zone0/temp",
-        "/sys/class/thermal/thermal_zone1/temp",
-        "/sys/devices/virtual/thermal/thermal_zone0/temp"
+        "/sys/class/thermal/thermal_zone1/temp"
     )
     for(path in paths) {
         try {
