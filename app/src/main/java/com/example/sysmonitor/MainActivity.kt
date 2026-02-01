@@ -1,10 +1,15 @@
+package com.example.sysmonitor
+
+import android.app.ActivityManager
+import android.content.Context
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.animation.core.*
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -18,22 +23,39 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.viewmodel.compose.viewModel
+import java.io.RandomAccessFile
+import androidx.compose.ui.graphics.Path
+
+// Colors
+val DarkBackground = Color(0xFF0F1115)
+val CardBackground = Color(0xFF1A1D24)
+val AccentBlue = Color(0xFF00D9FF)
+val AccentPurple = Color(0xFF6C63FF)
+val AccentGreen = Color(0xFF00E676)
+val AccentOrange = Color(0xFFFF6D00)
+
+data class SystemStats(
+    val cpuUsage: Float = 0f,
+    val memoryUsed: Long = 0,
+    val memoryTotal: Long = 0,
+    val gpuFrequency: Int = 0,
+    val cpuTemperature: Float = 0f
+)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        
-        val repository = SystemStatsRepository(this)
-        val factory = MonitorViewModelFactory(repository)
-        
         setContent {
-            SystemMonitorTheme(darkTheme = true) {
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.background
-                ) {
-                    SystemMonitorScreen(factory = factory)
+            MaterialTheme(
+                colorScheme = darkColorScheme(
+                    primary = AccentBlue,
+                    secondary = AccentPurple,
+                    background = DarkBackground,
+                    surface = CardBackground
+                )
+            ) {
+                Surface(color = DarkBackground) {
+                    SystemMonitorScreen()
                 }
             }
         }
@@ -41,339 +63,144 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun SystemMonitorScreen(factory: MonitorViewModelFactory) {
-    val viewModel: MonitorViewModel = viewModel(factory = factory)
-    val stats by viewModel.stats.collectAsState()
-    val cpuHistory by viewModel.cpuHistory.collectAsState()
+fun SystemMonitorScreen() {
+    var stats by remember { mutableStateOf(SystemStats()) }
+    var history by remember { mutableStateOf(listOf<Float>()) }
     
-    LazyColumn(
+    LaunchedEffect(Unit) {
+        while(true) {
+            val newStats = readSystemStats()
+            stats = newStats
+            
+            val newHistory = history.toMutableList()
+            newHistory.add(newStats.cpuUsage)
+            if(newHistory.size > 20) newHistory.removeAt(0)
+            history = newHistory
+            
+            kotlinx.coroutines.delay(1000)
+        }
+    }
+    
+    Column(
         modifier = Modifier
             .fillMaxSize()
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        item {
-            Text(
-                text = "System Monitor",
-                style = MaterialTheme.typography.headlineLarge,
-                fontWeight = FontWeight.Bold,
-                color = Color.White,
-                modifier = Modifier.padding(bottom = 8.dp)
-            )
-        }
+        Text(
+            "System Monitor",
+            fontSize = 32.sp,
+            fontWeight = FontWeight.Bold,
+            color = Color.White
+        )
         
-        item {
-            CPUMonitorCard(stats, cpuHistory)
-        }
-        
-        item {
-            MemoryMonitorCard(stats)
-        }
-        
-        item {
-            GPUMonitorCard(stats)
-        }
-        
-        item {
-            TemperatureCard(stats)
-        }
-        
-        item {
-            CoreFrequencies(stats)
-        }
-    }
-}
-
-@Composable
-fun CPUMonitorCard(stats: SystemStats, history: List<Float>) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(220.dp),
-        shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(containerColor = CardBackground)
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(20.dp)
+        // CPU Card
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = CardBackground)
         ) {
-            Column {
+            Column(modifier = Modifier.padding(20.dp)) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                    horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Text(
-                        "CPU Usage",
-                        color = Color.White,
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Medium
-                    )
-                    Text(
-                        "${stats.cpuUsage.roundToInt()}%",
-                        color = AccentBlue,
-                        fontSize = 28.sp,
-                        fontWeight = FontWeight.Bold
-                    )
+                    Text("CPU Usage", color = Color.Gray, fontSize = 16.sp)
+                    Text("${stats.cpuUsage.toInt()}%", color = AccentBlue, fontSize = 24.sp, fontWeight = FontWeight.Bold)
                 }
                 
                 Spacer(modifier = Modifier.height(16.dp))
                 
-                // Circular Progress with Animation
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f),
-                    contentAlignment = Alignment.Center
-                ) {
-                    AnimatedCircularProgress(
+                Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    CircularProgress(
                         progress = stats.cpuUsage / 100f,
                         color = AccentBlue,
-                        modifier = Modifier.size(140.dp)
+                        modifier = Modifier.size(120.dp)
                     )
-                    
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(
-                            "${stats.processes}",
-                            color = Color.White,
-                            fontSize = 24.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            "Processes",
-                            color = Color.Gray,
-                            fontSize = 12.sp
-                        )
-                    }
                 }
                 
-                // Mini Chart
-                if (history.isNotEmpty()) {
-                    SparkLine(
-                        data = history,
-                        color = AccentBlue,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(40.dp)
-                    )
+                if(history.size > 1) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Sparkline(data = history, color = AccentBlue, modifier = Modifier.fillMaxWidth().height(40.dp))
                 }
             }
         }
-    }
-}
-
-@Composable
-fun MemoryMonitorCard(stats: SystemStats) {
-    val usagePercent = if (stats.memoryTotal > 0) {
-        (stats.memoryUsed.toFloat() / stats.memoryTotal.toFloat())
-    } else 0f
-    
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(160.dp),
-        shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(containerColor = CardBackground)
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(20.dp)
+        
+        // Memory Card
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = CardBackground)
+        ) {
+            Column(modifier = Modifier.padding(20.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("Memory", color = Color.Gray, fontSize = 16.sp)
+                    val pct = if(stats.memoryTotal > 0) ((stats.memoryUsed.toFloat()/stats.memoryTotal.toFloat())*100).toInt() else 0
+                    Text("$pct%", color = AccentPurple, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                }
+                
+                Spacer(modifier = Modifier.height(12.dp))
+                
+                val progress = if(stats.memoryTotal > 0) stats.memoryUsed.toFloat()/stats.memoryTotal.toFloat() else 0f
+                LinearProgressIndicator(
+                    progress = progress,
+                    modifier = Modifier.fillMaxWidth().height(10.dp).clip(RoundedCornerShape(5.dp)),
+                    color = AccentPurple,
+                    trackColor = Color.DarkGray.copy(alpha = 0.3f)
+                )
+                
+                Spacer(modifier = Modifier.height(8.dp))
+                Text("${stats.memoryUsed}MB / ${stats.memoryTotal}MB", color = Color.Gray, fontSize = 14.sp)
+            }
+        }
+        
+        // GPU Card
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = CardBackground)
         ) {
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.padding(20.dp).fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    "Memory",
-                    color = Color.White,
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Medium
-                )
-                Text(
-                    "${(usagePercent * 100).roundToInt()}%",
-                    color = AccentPurple,
-                    fontSize = 28.sp,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-            
-            Spacer(modifier = Modifier.height(12.dp))
-            
-            LinearProgressIndicator(
-                progress = usagePercent,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(12.dp)
-                    .clip(RoundedCornerShape(6.dp)),
-                color = AccentPurple,
-                trackColor = Color.DarkGray.copy(alpha = 0.3f)
-            )
-            
-            Spacer(modifier = Modifier.height(16.dp))
-            
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                MemoryStat("Used", "${stats.memoryUsed} MB", AccentPurple)
-                MemoryStat("Total", "${stats.memoryTotal} MB", Color.Gray)
-                MemoryStat("Free", "${stats.memoryTotal - stats.memoryUsed} MB", AccentGreen)
-            }
-        }
-    }
-}
-
-@Composable
-fun GPUMonitorCard(stats: SystemStats) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(140.dp),
-        shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(containerColor = CardBackground)
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(20.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
                 Column {
-                    Text(
-                        "GPU",
-                        color = Color.White,
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Medium
-                    )
-                    Text(
-                        "${stats.gpuFrequency} MHz",
-                        color = AccentOrange,
-                        fontSize = 32.sp,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(top = 8.dp)
-                    )
-                    Text(
-                        "Current Frequency",
-                        color = Color.Gray,
-                        fontSize = 14.sp
-                    )
+                    Text("GPU Frequency", color = Color.Gray, fontSize = 16.sp)
+                    Text("${stats.gpuFrequency} MHz", color = AccentOrange, fontSize = 28.sp, fontWeight = FontWeight.Bold)
                 }
-                
-                // GPU Visual Representation
                 Box(
-                    modifier = Modifier
-                        .size(80.dp)
-                        .background(
-                            brush = Brush.radialGradient(
-                                colors = listOf(AccentOrange.copy(alpha = 0.4f), Color.Transparent)
-                            ),
-                            shape = RoundedCornerShape(40.dp)
-                        ),
+                    modifier = Modifier.size(60.dp).background(AccentOrange.copy(alpha = 0.2f), RoundedCornerShape(30.dp)),
                     contentAlignment = Alignment.Center
                 ) {
                     Text("GPU", color = AccentOrange, fontWeight = FontWeight.Bold)
                 }
             }
         }
-    }
-}
-
-@Composable
-fun TemperatureCard(stats: SystemStats) {
-    val tempColor = when {
-        stats.cpuTemperature > 70 -> Color(0xFFFF4444)
-        stats.cpuTemperature > 50 -> AccentOrange
-        else -> AccentGreen
-    }
-    
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(120.dp),
-        shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(containerColor = CardBackground)
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(20.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+        
+        // Temperature Card
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = CardBackground)
         ) {
-            Column {
-                Text(
-                    "CPU Temperature",
-                    color = Color.White,
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Medium
-                )
-                Text(
-                    if (stats.cpuTemperature > 0) "${stats.cpuTemperature}°C" else "N/A",
-                    color = tempColor,
-                    fontSize = 36.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(top = 4.dp)
-                )
-            }
-            
-            // Thermal Indicator
-            Box(
-                modifier = Modifier
-                    .size(60.dp)
-                    .background(
-                        color = tempColor.copy(alpha = 0.2f),
-                        shape = RoundedCornerShape(30.dp)
-                    ),
-                contentAlignment = Alignment.Center
+            Row(
+                modifier = Modifier.padding(20.dp).fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    "°C",
-                    color = tempColor,
-                    fontSize = 24.sp,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-        }
-    }
-}
-
-@Composable
-fun CoreFrequencies(stats: SystemStats) {
-    if (stats.cpuFreq.isEmpty()) return
-    
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(containerColor = CardBackground)
-    ) {
-        Column(
-            modifier = Modifier.padding(20.dp)
-        ) {
-            Text(
-                "Core Frequencies",
-                color = Color.White,
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Medium,
-                modifier = Modifier.padding(bottom = 12.dp)
-            )
-            
-            stats.cpuFreq.chunked(2).forEachIndexed { index, pair ->
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(16.dp)
-                ) {
-                    pair.forEachIndexed { coreIndex, freq ->
-                        val coreNum = index * 2 + coreIndex
-                        CoreFreqItem(coreNum, freq, Modifier.weight(1f))
+                Column {
+                    Text("CPU Temperature", color = Color.Gray, fontSize = 16.sp)
+                    val tempText = if(stats.cpuTemperature > 0) "${stats.cpuTemperature}°C" else "N/A"
+                    val tempColor = when {
+                        stats.cpuTemperature > 70 -> Color.Red
+                        stats.cpuTemperature > 50 -> AccentOrange
+                        else -> AccentGreen
                     }
+                    Text(tempText, color = tempColor, fontSize = 28.sp, fontWeight = FontWeight.Bold)
                 }
             }
         }
@@ -381,52 +208,10 @@ fun CoreFrequencies(stats: SystemStats) {
 }
 
 @Composable
-fun CoreFreqItem(core: Int, freq: Int, modifier: Modifier) {
-    Row(
-        modifier = modifier
-            .background(Color.DarkGray.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(
-            "Core $core",
-            color = Color.Gray,
-            fontSize = 12.sp
-        )
-        Text(
-            if (freq > 0) "$freq MHz" else "Offline",
-            color = if (freq > 2000) AccentGreen else Color.White,
-            fontSize = 14.sp,
-            fontWeight = FontWeight.Medium
-        )
-    }
-}
-
-@Composable
-fun MemoryStat(label: String, value: String, color: Color) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(value, color = color, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-        Text(label, color = Color.Gray, fontSize = 12.sp)
-    }
-}
-
-@Composable
-fun AnimatedCircularProgress(
-    progress: Float,
-    color: Color,
-    modifier: Modifier = Modifier,
-    strokeWidth: Float = 12f
-) {
-    val animatedProgress by animateFloatAsState(
-        targetValue = progress,
-        animationSpec = tween(1000, easing = FastOutSlowInEasing),
-        label = "progress"
-    )
-    
-    androidx.compose.foundation.Canvas(modifier = modifier) {
-        val sweepAngle = animatedProgress * 360f
-        
+fun CircularProgress(progress: Float, color: Color, modifier: Modifier = Modifier) {
+    val animatedProgress by animateFloatAsState(targetValue = progress, label = "progress")
+    Canvas(modifier = modifier) {
+        val strokeWidth = 12f
         drawArc(
             color = Color.DarkGray.copy(alpha = 0.2f),
             startAngle = 0f,
@@ -434,11 +219,10 @@ fun AnimatedCircularProgress(
             useCenter = false,
             style = Stroke(strokeWidth, cap = StrokeCap.Round)
         )
-        
         drawArc(
             color = color,
             startAngle = -90f,
-            sweepAngle = sweepAngle,
+            sweepAngle = animatedProgress * 360f,
             useCenter = false,
             style = Stroke(strokeWidth, cap = StrokeCap.Round)
         )
@@ -446,51 +230,84 @@ fun AnimatedCircularProgress(
 }
 
 @Composable
-fun SparkLine(
-    data: List<Float>,
-    color: Color,
-    modifier: Modifier = Modifier
-) {
-    if (data.size < 2) return
-    
-    androidx.compose.foundation.Canvas(modifier = modifier) {
+fun Sparkline(data: List<Float>, color: Color, modifier: Modifier = Modifier) {
+    Canvas(modifier = modifier) {
+        if(data.size < 2) return@Canvas
         val width = size.width
         val height = size.height
         val max = data.maxOrNull() ?: 100f
         val min = data.minOrNull() ?: 0f
         val range = max - min
+        if(range == 0f) return@Canvas
         
         val stepX = width / (data.size - 1)
-        
-        val path = androidx.compose.ui.graphics.Path().apply {
+        val path = Path().apply {
             data.forEachIndexed { index, value ->
                 val x = index * stepX
                 val y = height - ((value - min) / range * height)
-                if (index == 0) moveTo(x, y) else lineTo(x, y)
+                if(index == 0) moveTo(x, y) else lineTo(x, y)
             }
         }
-        
-        drawPath(
-            path = path,
-            color = color,
-            style = Stroke(3f, cap = StrokeCap.Round)
-        )
-        
-        // Gradient fill
-        val fillPath = androidx.compose.ui.graphics.Path().apply {
-            addPath(path)
-            lineTo(width, height)
-            lineTo(0f, height)
-            close()
-        }
-        
-        drawPath(
-            path = fillPath,
-            brush = Brush.verticalGradient(
-                colors = listOf(color.copy(alpha = 0.3f), Color.Transparent),
-                startY = 0f,
-                endY = height
-            )
-        )
+        drawPath(path = path, color = color, style = Stroke(3f, cap = StrokeCap.Round))
     }
+}
+
+fun readSystemStats(): SystemStats {
+    return SystemStats(
+        cpuUsage = readCpuUsage(),
+        memoryUsed = readMemory().first,
+        memoryTotal = readMemory().second,
+        gpuFrequency = readGpuFreq(),
+        cpuTemperature = readTemp()
+    )
+}
+
+fun readCpuUsage(): Float {
+    return try {
+        val reader = RandomAccessFile("/proc/stat", "r")
+        val line = reader.readLine()
+        reader.close()
+        val parts = line.split(" ").filter { it.isNotEmpty() }.drop(1).map { it.toLong() }
+        if(parts.size >= 4) {
+            val active = parts[0] + parts[1] + parts[2]
+            val total = active + parts[3]
+            if(total > 0) (active.toFloat() / total.toFloat() * 100) else 0f
+        } else 0f
+    } catch(e: Exception) { 0f }
+}
+
+fun readMemory(): Pair<Long, Long> {
+    // This is a placeholder - in real app you'd use ActivityManager
+    return Pair(4000, 8000)
+}
+
+fun readGpuFreq(): Int {
+    val paths = arrayOf(
+        "/sys/class/kgsl/kgsl-3d0/gpuclk",
+        "/sys/class/misc/mali0/device/clock"
+    )
+    for(path in paths) {
+        try {
+            val reader = RandomAccessFile(path, "r")
+            val freq = reader.readLine().toInt() / 1000000
+            reader.close()
+            if(freq > 0) return freq
+        } catch(e: Exception) {}
+    }
+    return 0
+}
+
+fun readTemp(): Float {
+    val paths = arrayOf(
+        "/sys/class/thermal/thermal_zone0/temp"
+    )
+    for(path in paths) {
+        try {
+            val reader = RandomAccessFile(path, "r")
+            val temp = reader.readLine().toFloat() / 1000f
+            reader.close()
+            return temp
+        } catch(e: Exception) {}
+    }
+    return 0f
 }
